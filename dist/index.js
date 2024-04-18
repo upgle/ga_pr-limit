@@ -8374,26 +8374,33 @@ function takeActions(prId) {
         process.exit(1);
     });
 }
-function reachedLimitPRs(actor) {
-    var _a;
+function reachedLimitPRs(actor, baseBranch) {
+    var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
         const { context } = github;
         const MAX_PRS = core.getInput("MAX_PRS") || 10;
         const queryStr = `repo:${context.repo.owner}/${context.repo.repo} is:open is:pr author:${actor}`;
         const data = yield getClient().graphql(`
         query currentPRs($queryStr: String!) {
-            search(query: $queryStr, type: ISSUE) {
-                issueCount
+            search(query: $queryStr, type: ISSUE, first: 100) {
+                edges {
+                    node {
+                        ... on PullRequest {
+                            baseRefName
+                        }
+                    }
+                }
             }
         }
     `, {
             queryStr
         });
-        return ((_a = data === null || data === void 0 ? void 0 : data.search) === null || _a === void 0 ? void 0 : _a.issueCount) >= MAX_PRS;
+        const sameBaseBranchCount = (_b = (_a = data === null || data === void 0 ? void 0 : data.search) === null || _a === void 0 ? void 0 : _a.edges) === null || _b === void 0 ? void 0 : _b.filter((pr) => pr.node.baseRefName === baseBranch).length;
+        return sameBaseBranchCount >= MAX_PRS;
     });
 }
 function getPRInfo() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     return __awaiter(this, void 0, void 0, function* () {
         const { context } = github;
         const data = yield getClient().graphql(`
@@ -8403,6 +8410,9 @@ function getPRInfo() {
                     id,
                     author {
                         login
+                    },
+                    baseRef {
+                        name
                     }
                 }
             }
@@ -8414,13 +8424,15 @@ function getPRInfo() {
         });
         const prId = (_b = (_a = data === null || data === void 0 ? void 0 : data.repository) === null || _a === void 0 ? void 0 : _a.pullRequest) === null || _b === void 0 ? void 0 : _b.id;
         const login = (_e = (_d = (_c = data === null || data === void 0 ? void 0 : data.repository) === null || _c === void 0 ? void 0 : _c.pullRequest) === null || _d === void 0 ? void 0 : _d.author) === null || _e === void 0 ? void 0 : _e.login;
-        if (!prId || !login) {
+        const baseBranch = (_h = (_g = (_f = data === null || data === void 0 ? void 0 : data.repository) === null || _f === void 0 ? void 0 : _f.pullRequest) === null || _g === void 0 ? void 0 : _g.baseRef) === null || _h === void 0 ? void 0 : _h.name;
+        if (!prId || !login || !baseBranch) {
             core.setFailed('failed to get info from PR');
             process.exit(1);
         }
         return {
             prId,
-            login
+            login,
+            baseBranch,
         };
     });
 }
@@ -8445,7 +8457,7 @@ function run() {
         if (isExcluded(info.login)) {
             process.exit(0);
         }
-        if (yield reachedLimitPRs(info.login)) {
+        if (yield reachedLimitPRs(info.login, info.baseBranch)) {
             takeActions(info.prId);
         }
     });
