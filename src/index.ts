@@ -45,24 +45,30 @@ async function takeActions(prId: string) {
     // exist and make the action fail
     core.setFailed(message);
     process.exit(1);
-} 
+}
 
-async function reachedLimitPRs(actor: string) {
+async function reachedLimitPRs(actor: string, baseBranch: string) {
     const { context } = github;
     const MAX_PRS = core.getInput("MAX_PRS") || 10;
 
     const queryStr = `repo:${context.repo.owner}/${context.repo.repo} is:open is:pr author:${actor}`;
-    const data: SearchQuery = await getClient().graphql(`
+    const data: any = await getClient().graphql(`
         query currentPRs($queryStr: String!) {
-            search(query: $queryStr, type: ISSUE) {
-                issueCount
+            search(query: $queryStr, type: ISSUE, first: 100) {
+                edges {
+                    node {
+                        ... on PullRequest {
+                            baseRefName
+                        }
+                    }
+                }
             }
         }
     `, {
         queryStr
     });
-
-    return data?.search?.issueCount >= MAX_PRS;
+    const sameBaseBranchCount = data?.search?.edges?.filter((pr: any) => pr.node.baseRefName === baseBranch).length;
+    return sameBaseBranchCount >= MAX_PRS;
 }
 
 interface PullRequestIdQuery {
@@ -71,6 +77,9 @@ interface PullRequestIdQuery {
             id: string;
             author?: {
                 login: string;
+            }
+            baseRef?: {
+                name: string;
             }
         }
     }
@@ -85,6 +94,9 @@ async function getPRInfo() {
                     id,
                     author {
                         login
+                    },
+                    baseRef {
+                        name
                     }
                 }
             }
@@ -97,15 +109,17 @@ async function getPRInfo() {
 
     const prId = data?.repository?.pullRequest?.id;
     const login = data?.repository?.pullRequest?.author?.login;
+    const baseBranch = data?.repository?.pullRequest?.baseRef?.name;
 
-    if (!prId || !login) {
+    if (!prId || !login || !baseBranch) {
         core.setFailed('failed to get info from PR');
         process.exit(1);
     }
 
     return {
         prId,
-        login
+        login,
+        baseBranch,
     }
 }
 
@@ -137,7 +151,7 @@ async function run () {
         process.exit(0);
     }
 
-    if (await reachedLimitPRs(info.login)) {
+    if (await reachedLimitPRs(info.login, info.baseBranch)) {
         takeActions(info.prId);
     }
 }
